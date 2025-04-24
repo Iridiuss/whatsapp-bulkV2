@@ -29,8 +29,11 @@ export async function POST(req: NextRequest): Promise<Response> {
     const scriptPath = path.join(process.cwd(), '..', "backend", "whatsapp-mcp-server2", "send_bulk_whatsapp.py");
     console.log('Script path:', scriptPath);
 
-    // Build command
-    const command = `python ${scriptPath} ${filePath} --message-file "${messageFilePath}"`;
+    // Define images directory path
+    const imagesDir = path.join(process.cwd(), '..', "backend", "whatsapp-mcp-server2", "poster_images");
+
+    // Always use images
+    const command = `python ${scriptPath} ${filePath} --message-file "${messageFilePath}" --image-dir "${imagesDir}"`;
 
     return await new Promise<Response>((resolve) => {
       exec(command, (error, stdout, stderr) => {

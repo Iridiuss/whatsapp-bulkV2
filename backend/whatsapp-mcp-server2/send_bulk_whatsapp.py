@@ -9,6 +9,9 @@ import random
 import time
 import requests
 import datetime
+import subprocess
+import glob
+from typing import List, Tuple
 
 # Fixed message templates that will be slightly varied
 MESSAGE_TEMPLATES = [
@@ -128,7 +131,35 @@ def format_message_with_links(message):
     return message
 
 def personalize_message(base_message, contact_number=None):
-    """Add small variations to make messages look manually typed"""
+    """Add small variations to make messages look manually typed while preserving links"""
+    # First identify all links to protect them
+    url_patterns = [
+        r'(https?:\/\/(?:www\.)?[^\s]+)',
+        r'(?<!\S)(www\.[^\s]+)',
+        r'(?<!\S)(chat\.whatsapp\.com\/[^\s]+)',
+        r'(?<!\S)(youtu\.be\/[^\s]+)'
+    ]
+    
+    # Combine patterns and find all URLs
+    combined_pattern = '|'.join(url_patterns)
+    urls = re.findall(combined_pattern, base_message)
+    
+    # Flatten the list of URLs
+    flat_urls = []
+    for u in urls:
+        if isinstance(u, tuple):
+            flat_urls.extend([x for x in u if x])
+        else:
+            flat_urls.append(u)
+    
+    # Create placeholders for each URL to protect them during modifications
+    url_placeholders = {}
+    for i, url in enumerate(flat_urls):
+        if url:
+            placeholder = f"__URL_PLACEHOLDER_{i}__"
+            url_placeholders[placeholder] = url
+            base_message = base_message.replace(url, placeholder)
+    
     # Choose random greeting
     greeting = random.choice(GREETINGS)
     
@@ -145,14 +176,26 @@ def personalize_message(base_message, contact_number=None):
             ("boost", "bosot", "boost*"),
             ("learning", "leanring", "learning*"),
             ("Classical", "Clasical", "Classical*"),
-            ("Foundation", "Foundaton", "Foundation*")
+            ("Foundation", "Foundaton", "Foundation*"),
+            ("skills", "skilsl", "skills*"),
+            ("beautiful", "beutiful", "beautiful*"),
+            ("opportunity", "oportunity", "opportunity*"),
+            ("Benefits", "Benifits", "Benefits*")
         ]
         typo_spot = random.choice(typo_spots)
         if typo_spot[0] in base_message and random.random() < 0.5:
-            base_message = base_message.replace(typo_spot[0], typo_spot[1], 1)
+            # Make sure not to replace within a placeholder
+            for part in base_message.split():
+                if typo_spot[0] in part and not part.startswith("__URL_PLACEHOLDER_"):
+                    base_message = base_message.replace(part, part.replace(typo_spot[0], typo_spot[1]), 1)
+                    break
+            
             # 50% chance to "correct" the typo
             if random.random() < 0.5:
-                base_message = base_message.replace(typo_spot[1], typo_spot[2], 1)
+                for part in base_message.split():
+                    if typo_spot[1] in part and not part.startswith("__URL_PLACEHOLDER_"):
+                        base_message = base_message.replace(part, part.replace(typo_spot[1], typo_spot[2]), 1)
+                        break
     
     # Add random whitespace variations (10% chance)
     if random.random() < 0.1:
@@ -178,8 +221,138 @@ def personalize_message(base_message, contact_number=None):
         now = datetime.datetime.now()
         time_msg = f"\n\nSent: {now.strftime('%d/%m/%Y')}"
         base_message += time_msg
+    
+    # Restore all URL placeholders back to their original URLs
+    for placeholder, url in url_placeholders.items():
+        base_message = base_message.replace(placeholder, url)
         
     return base_message
+
+def send_image_with_caption(recipient: str, caption: str, image_path: str) -> Tuple[bool, str]:
+    """Send an image with a caption to the specified recipient."""
+    try:
+        # Verify image exists
+        if not os.path.exists(image_path):
+            return False, f"Image file not found at {image_path}"
+            
+        # Get absolute paths for everything
+        abs_image_path = os.path.abspath(image_path)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        whatsapp_bridge_dir = os.path.abspath(os.path.join(script_dir, "..", "whatsapp-bridge"))
+        go_script_path = os.path.join(whatsapp_bridge_dir, "send_whatsapp_image.go")
+        
+        if not os.path.exists(go_script_path):
+            return False, f"Image sending script not found at {go_script_path}"
+        
+        print(f"Using Go script at: {go_script_path}")
+        print(f"Using image at: {abs_image_path}")
+        
+        # Save current directory
+        original_dir = os.getcwd()
+        temp_file = None
+        
+        try:
+            # Create a temporary file for the caption to avoid encoding issues
+            import tempfile
+            temp_file = tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False, suffix='.txt')
+            temp_file.write(caption)
+            temp_file.close()
+            caption_file_path = temp_file.name
+            print(f"Saved caption to temp file: {caption_file_path}")
+            
+            # Change to the whatsapp-bridge directory where the Go script and go.mod are
+            os.chdir(whatsapp_bridge_dir)
+            print(f"Changed to directory: {whatsapp_bridge_dir}")
+            
+            # Run the Go script with file input for caption
+            env = os.environ.copy()
+            env['CGO_ENABLED'] = '1'
+            cmd = ["go", "run", "send_whatsapp_image.go", recipient, f"file:{caption_file_path}", abs_image_path]
+            print(f"Running command: {cmd}")  # Don't join strings to avoid encoding issues
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', env=env)
+            
+            # Print output safely, handling encoding issues
+            try:
+                print(f"Command stdout: {result.stdout}")
+                print(f"Command stderr: {result.stderr}")
+            except UnicodeEncodeError:
+                print("Command output contains characters that can't be displayed in the current console encoding")
+                print("Command stderr:", result.stderr.encode('ascii', 'replace').decode('ascii'))
+            
+            # Check the result
+            if result.returncode == 0 and "Image message sent successfully" in result.stdout:
+                return True, f"Image sent to {recipient}"
+            else:
+                error_msg = result.stderr if result.stderr else result.stdout
+                return False, f"Failed to send image: {error_msg}"
+                
+        finally:
+            # Return to original directory
+            os.chdir(original_dir)
+            # Clean up temp file
+            if temp_file and os.path.exists(temp_file.name):
+                os.unlink(temp_file.name)
+            
+    except Exception as e:
+        import traceback
+        print(f"Exception: {str(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
+        return False, f"Error sending image: {str(e)}"
+
+def ensure_clickable_links_in_caption(caption: str) -> str:
+    """Format caption to ensure links are clickable when sent with images.
+    
+    Args:
+        caption: The caption text with links
+        
+    Returns:
+        Formatted caption with links that will be clickable on mobile
+    """
+    # Find all URLs in the caption
+    url_patterns = [
+        r'https?:\/\/(?:www\.)?[^\s]+',
+        r'(?<!\S)www\.[^\s]+',
+        r'(?<!\S)chat\.whatsapp\.com\/[^\s]+',
+        r'(?<!\S)youtu\.be\/[^\s]+'
+    ]
+    
+    combined_pattern = '|'.join(url_patterns)
+    urls = re.findall(combined_pattern, caption)
+    
+    # For each URL, ensure it's on its own line for better clickability
+    modified_caption = caption
+    for url in urls:
+        # Check if the URL is already on its own line
+        url_with_newlines = f"\n{url}\n"
+        if url not in modified_caption:
+            continue
+            
+        if f"\n{url}" not in modified_caption and f"{url}\n" not in modified_caption:
+            # Replace the URL with a version that has newlines before and after
+            modified_caption = modified_caption.replace(url, url_with_newlines)
+    
+    # Clean up any excessive newlines that might have been created
+    modified_caption = re.sub(r'\n{3,}', '\n\n', modified_caption)
+    
+    return modified_caption
+
+def get_image_files(directory: str) -> List[str]:
+    """Get all image files from a directory
+    
+    Args:
+        directory: Path to directory containing images
+        
+    Returns:
+        List of image file paths
+    """
+    image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.gif']
+    image_files = []
+    
+    for ext in image_extensions:
+        image_files.extend(glob.glob(os.path.join(directory, ext)))
+    
+    return image_files
 
 def simulate_human_typing(batch_size, total_contacts):
     """Simulate more human-like messaging patterns"""
@@ -210,7 +383,7 @@ def natural_delay_strategy():
     else:
         return base_delay
         
-def send_bulk_messages(excel_path: str, min_delay: int = 5, max_delay: int = 45) -> None:
+def send_bulk_messages(excel_path: str, image_dir: str = None, min_delay: int = 5, max_delay: int = 45) -> None:
     """Send WhatsApp message to all numbers in the Excel file with natural delays."""
     try:
         # Simple connection check
@@ -239,7 +412,27 @@ def send_bulk_messages(excel_path: str, min_delay: int = 5, max_delay: int = 45)
         success = 0
         failed = 0
         
+        # Check if image mode is enabled
+        use_images = False
+        available_images = []
+        recent_images = []
+        
+        if image_dir and os.path.exists(image_dir):
+            available_images = get_image_files(image_dir)
+            if available_images:
+                use_images = True
+                print(f"Image mode enabled - found {len(available_images)} images in {image_dir}")
+                
+                # Track recently used images
+                max_recent = min(5, len(available_images))
+                
+                if len(available_images) < 5:
+                    print("WARNING: Using fewer than 5 different poster images increases detection risk!")
+            else:
+                print(f"No images found in {image_dir}, running in text-only mode")
+        
         print(f"\nPreparing to send messages to {total} numbers...")
+        print(f"Mode: {'Image+Caption' if use_images else 'Text only'}")
         print(f"Using dynamic delay strategy between messages")
         print("-" * 50)
         
@@ -277,19 +470,59 @@ def send_bulk_messages(excel_path: str, min_delay: int = 5, max_delay: int = 45)
                 # Format the links
                 formatted_message = format_message_with_links(personalized_message)
                 
-                # Simulate typing delay before sending
-                typing_delay = random.uniform(3, 15)  # 3-15 seconds
+                # Simulate message preparation delay (same for both text and image)
+                typing_delay = random.uniform(3, 15)
                 print(f"Preparing message... ({typing_delay:.1f}s)")
                 time.sleep(typing_delay)
                 
-                # Send the message
-                success_status, status_message = whatsapp_send_message(clean_phone, formatted_message)
+                success_status = False
+                status_message = ""
+                
+                # Send with image if in image mode
+                if use_images:
+                    # Choose image avoiding recently used ones if possible
+                    available_choices = [img for img in available_images if img not in recent_images]
+                    if not available_choices:
+                        # If all images were recently used, reset but avoid the most recent
+                        last_used = recent_images[-1] if recent_images else None
+                        recent_images = []
+                        available_choices = [img for img in available_images if img != last_used]
+                    
+                    # Select a random image
+                    image_path = random.choice(available_choices)
+                    
+                    # Track for avoiding immediate repetition
+                    recent_images.append(image_path)
+                    if len(recent_images) > max_recent:
+                        recent_images.pop(0)  # Remove oldest
+                    
+                    print(f"Selected image: {os.path.basename(image_path)}")
+                    
+                    # Make sure critical URLs are separated to their own lines for better clickability
+                    formatted_message = format_message_with_links(personalized_message)
+                    
+                    # Send the image with caption
+                    success_status, status_message = send_image_with_caption(
+                        clean_phone, 
+                        formatted_message, 
+                        image_path
+                    )
+                    
+                    # If image sending fails, fall back to text-only
+                    if not success_status:
+                        print(f"Image sending failed: {status_message}")
+                        print("Falling back to text-only message...")
+                        success_status, status_message = whatsapp_send_message(clean_phone, formatted_message)
+                else:
+                    # Text-only mode
+                    success_status, status_message = whatsapp_send_message(clean_phone, formatted_message)
                 
                 if success_status:
-                    print(f"SUCCESS: Message sent to {clean_phone}: {status_message}")
+                    mode = "Image+Caption" if use_images else "Text"
+                    print(f"SUCCESS: {mode} sent to {clean_phone}: {status_message}")
                     success += 1
                 else:
-                    print(f"FAILED: {clean_phone}: {status_message}")
+                    print(f"FAILED: Message to {clean_phone}: {status_message}")
                     failed += 1
                 
                 sys.stdout.flush()
@@ -330,6 +563,9 @@ def main():
     message_group.add_argument('--message', help='Message text to send (will be ignored, template messages are used)')
     message_group.add_argument('--message-file', help='Path to file containing message text (will be ignored, template messages are used)')
     
+    # Add image directory parameter
+    parser.add_argument('--image-dir', help='Directory containing images to send with captions')
+    
     parser.add_argument('--min-delay', type=int, default=5, help='Minimum delay in seconds between messages (default: 5)')
     parser.add_argument('--max-delay', type=int, default=45, help='Maximum delay in seconds between messages (default: 45)')
     parser.add_argument('--stealth-mode', action='store_true', help='Enable maximum stealth mode with more human-like patterns')
@@ -337,7 +573,7 @@ def main():
     args = parser.parse_args()
     
     # Use the enhanced bulk message sender
-    send_bulk_messages(args.excel_path, args.min_delay, args.max_delay)
+    send_bulk_messages(args.excel_path, args.image_dir, args.min_delay, args.max_delay)
 
 if __name__ == "__main__":
     main() 

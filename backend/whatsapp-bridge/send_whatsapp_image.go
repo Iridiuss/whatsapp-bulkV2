@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	// Replace the SQLite driver with pure Go alternative
+	_ "modernc.org/sqlite" // Pure Go SQLite implementation
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -50,7 +52,7 @@ func main() {
 
 	// Connect to the database
 	logger := waLog.Stdout("Client", "DEBUG", true)
-	container, err := sqlstore.New("sqlite3", "file:"+dbPath+"?_foreign_keys=on", logger)
+	container, err := sqlstore.New("sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)", logger)
 	if err != nil {
 		fmt.Printf("Failed to connect to database: %v\n", err)
 		os.Exit(1)
@@ -88,6 +90,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Check if message starts with "file:" prefix
+	if strings.HasPrefix(message, "file:") {
+		// Extract file path from message
+		filePath := message[5:]
+		// Read the message from the file
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			fmt.Printf("Error reading message file: %v\n", err)
+			os.Exit(1)
+		}
+		message = string(data)
+	}
+
 	// Read the image file
 	imgData, err := os.ReadFile(imagePath)
 	if err != nil {
@@ -95,6 +110,26 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("Image size: %d bytes\n", len(imgData))
+
+	// After reading the image file
+	if len(imgData) > 5*1024*1024 {
+		fmt.Printf("Warning: Image size is %d MB, which may be too large. Consider reducing to under 5MB for better compatibility.\n", len(imgData)/(1024*1024))
+	}
+
+	// Determine MIME type based on file extension
+	mimeType := "image/jpeg" // Default
+	filenameLower := strings.ToLower(imagePath)
+	if strings.HasSuffix(filenameLower, ".png") {
+		mimeType = "image/png"
+	} else if strings.HasSuffix(filenameLower, ".gif") {
+		mimeType = "image/gif"
+	} else if strings.HasSuffix(filenameLower, ".webp") {
+		mimeType = "image/webp"
+	}
+	fmt.Printf("Using MIME type: %s for image: %s\n", mimeType, imagePath)
+
+	// After line 110, add a check for PNG files and a comment that JPEGs work better
+	fmt.Printf("Note: JPEG images (.jpg, .jpeg) typically display more reliably than PNG on WhatsApp\n")
 
 	// Create recipient JID
 	recipientJID := types.JID{
@@ -121,16 +156,17 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Create image message
+	// Create image message with basic required fields only
 	imageMsg := &waProto.Message{
 		ImageMessage: &waProto.ImageMessage{
-			Url:           proto.String(uploadedImage.URL),
-			Mimetype:      proto.String("image/jpeg"),
+			URL:           proto.String(uploadedImage.URL),
+			Mimetype:      proto.String(mimeType),
 			FileLength:    proto.Uint64(uint64(len(imgData))),
-			FileSha256:    uploadedImage.FileSHA256,
-			FileEncSha256: uploadedImage.FileEncSHA256,
+			FileSHA256:    uploadedImage.FileSHA256,
+			FileEncSHA256: uploadedImage.FileEncSHA256,
 			MediaKey:      uploadedImage.MediaKey,
 			Caption:       proto.String(message),
+			DirectPath:    proto.String(uploadedImage.DirectPath),
 		},
 	}
 
