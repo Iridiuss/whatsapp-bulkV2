@@ -1,0 +1,29 @@
+# Core dependencies from pyproject.toml
+httpx>=0.28.1
+mcp[cli]>=1.6.0
+requests>=2.32.3
+
+# Additional dependencies identified in the code
+pandas>=1.0.0  # Used for Excel operations
+
+# Dependencies for image operations
+# Note: The Go language (version 1.18+) must be installed separately on the system
+# Go package dependencies (used in send_whatsapp_image.go):
+# - modernc.org/sqlite (Pure Go SQLite implementation)
+# - go.mau.fi/whatsmeow (WhatsApp library for Go)
+# - google.golang.org/protobuf (Protocol Buffers for Go)
+
+# Standard library dependencies (no need to install separately):
+# - sqlite3
+# - dataclasses
+# - typing
+# - datetime
+# - base64
+# - subprocess
+# - argparse
+# - re
+# - random
+# - time
+# - glob
+# - sys
+# - os
