@@ -49,7 +49,6 @@ const TextWithClickableLinks = ({ text }: { text: string }) => {
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
-  const [message, setMessage] = useState('');
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -79,9 +78,8 @@ Need Help? Call/WhatsApp Us:
 📞 9353173653 / 9830059978
 Let's learn, dance, and grow together – India is rising!`;
 
-  // Set the fixed message when component mounts
   useEffect(() => {
-    setMessage(fixedMessage);
+    // No need to set the message state since we're using fixedMessage directly
   }, []);
 
   const handleSubmit = async () => {
