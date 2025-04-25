@@ -53,11 +53,33 @@ export async function GET() {
         const execOptions = {
             cwd: bridgeDir,
             env,
-            timeout: 5000, // 5 second timeout
+            timeout: 120000, // 5 second timeout
             maxBuffer: 1024 * 500 // Increased buffer size
         };
 
         // Execute helper script with env containing QR string
+        // exec(`go run qrcode_helper.go`, execOptions, (error, stdout, stderr) => {
+        //     if (error) {
+        //         console.error('QR Code helper error:', stderr || error.message);
+        //         return resolve(NextResponse.json({
+        //             success: false,
+        //             status: 'error',
+        //             message: stderr || 'Failed to get QR code',
+        //         }, { status: 500 }));
+        //     }
+
+        //     try {
+        //         const result = JSON.parse(stdout.trim());
+        //         return resolve(NextResponse.json(result));
+        //     } catch (parseError) {
+        //         console.error('Error parsing helper output:', parseError);
+        //         return resolve(NextResponse.json({
+        //             success: false,
+        //             status: 'error',
+        //             message: 'Invalid response from QR code helper',
+        //         }, { status: 500 }));
+        //     }
+        // });
         exec(`go run qrcode_helper.go`, execOptions, (error, stdout, stderr) => {
             if (error) {
                 console.error('QR Code helper error:', stderr || error.message);
@@ -68,8 +90,11 @@ export async function GET() {
                 }, { status: 500 }));
             }
 
+            console.log("Go script output:", stdout); // Log output for debugging
+
             try {
                 const result = JSON.parse(stdout.trim());
+                console.log("Parsed result:", result); // Log parsed result for debugging
                 return resolve(NextResponse.json(result));
             } catch (parseError) {
                 console.error('Error parsing helper output:', parseError);
@@ -80,6 +105,7 @@ export async function GET() {
                 }, { status: 500 }));
             }
         });
+
     });
 }
 
